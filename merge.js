@@ -1,6 +1,6 @@
 (function () {
   "use strict";
-
+ 
   const defaultConfig = {
     files: [],
     basePath: "", 
