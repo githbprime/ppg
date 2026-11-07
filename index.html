@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 <html lang="en-us">
   <head>
@@ -7,29 +6,62 @@
     <title>people playground.</title>
     <link rel="shortcut icon" href="TemplateData/favicon.ico">
     <link rel="stylesheet" href="TemplateData/style.css">
-    <link rel="manifest" href="manifest.webmanifest">
     <style>
+      body {
+        margin: 0;
+        padding: 0;
+        background-color: #000;
+        color: #fff;
+        font-family: Tahoma, sans-serif;
+        overflow: hidden;
+      }
+
+      #unity-container {
+        width: 100vw;
+        height: 100vh;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+
+      #unity-canvas {
+        background: #000;
+      }
+
+      /* XP Loader CSS */
       #xp-loader {
         position: absolute;
         top: 50%;
         left: 50%;
         transform: translate(-50%, -50%);
-        width: 260px;
+        width: 340px;
         background: #ece9d8;
         border: 2px solid #3a6ea5;
         box-shadow: 0 0 0 3px #ffffff inset;
-        font-family: Tahoma, sans-serif;
+        color: #000;
         padding: 12px;
         display: flex;
         flex-direction: column;
-        gap: 10px;
+        gap: 8px;
+        z-index: 9999;
       }
+
       #xp-loader-title {
         background: linear-gradient(#2b74c7, #1a4a9c);
         color: white;
         padding: 4px 8px;
         font-size: 14px;
+        font-weight: bold;
       }
+
+      #xp-loader-status {
+        font-size: 12px;
+        color: #333;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
       #xp-loader-bar {
         width: 100%;
         height: 18px;
@@ -37,27 +69,78 @@
         background: white;
         overflow: hidden;
       }
+
       #xp-loader-fill {
         width: 0%;
         height: 100%;
-        background: #4a8be0;
+        background: linear-gradient(to bottom, #74b0f7, #3b7ad0);
+        transition: width 0.1s ease;
       }
-      #unity-loading-bar {
+
+      #xp-loader-text {
+        font-size: 12px;
+        text-align: right;
+        color: #333;
+      }
+
+      /* On-Screen Error Console Overlay */
+      #error-console {
         display: none;
+        position: fixed;
+        bottom: 10px;
+        left: 10px;
+        right: 10px;
+        max-height: 45vh;
+        background: rgba(20, 0, 0, 0.92);
+        border: 2px solid #ff3333;
+        color: #ff9999;
+        font-family: monospace;
+        font-size: 12px;
+        padding: 12px;
+        overflow-y: auto;
+        z-index: 100000;
+        box-shadow: 0 0 15px rgba(255, 0, 0, 0.6);
+      }
+
+      #error-console h4 {
+        margin: 0 0 8px 0;
+        color: #ff4d4d;
+        font-size: 13px;
+        border-bottom: 1px solid #ff3333;
+        padding-bottom: 4px;
+        text-transform: uppercase;
+      }
+
+      .error-entry {
+        margin-bottom: 6px;
+        white-space: pre-wrap;
+        word-break: break-word;
+        border-bottom: 1px dashed rgba(255, 255, 255, 0.15);
+        padding-bottom: 4px;
       }
     </style>
   </head>
   <body>
+    <!-- XP Unity Loader Box -->
     <div id="xp-loader">
-      <div id="xp-loader-title">Loading..</div>
+      <div id="xp-loader-title">People Playground Loader</div>
+      <div id="xp-loader-status">Waiting for file merger...</div>
       <div id="xp-loader-bar"><div id="xp-loader-fill"></div></div>
       <div id="xp-loader-text">0%</div>
     </div>
 
+    <!-- Unity Container -->
     <div id="unity-container">
       <canvas id="unity-canvas" width="960" height="600" tabindex="-1"></canvas>
-      <div id="unity-warning"></div>
     </div>
+
+    <!-- Visible On-Screen Error Log Overlay -->
+    <div id="error-console">
+      <h4>⚠️ Unity / Script Error Log</h4>
+      <div id="error-log-list"></div>
+    </div>
+
+    <!-- FileMerger Configuration -->
     <script>
       window.fileMergerConfig = {
         files: [
@@ -67,73 +150,123 @@
         basePath: 'Build/',
         debug: true
       };  
-  </script>
-  <script src="./merge.js"></script>
+    </script>
+    <script src="./merge.js"></script>
+
     <script>
+      // 1. Setup Global On-Screen Error Console Logger
+      (function setupErrorLogging() {
+        var errorConsole = document.querySelector("#error-console");
+        var errorLogList = document.querySelector("#error-log-list");
+
+        function displayError(msg) {
+          errorConsole.style.display = "block";
+          var entry = document.createElement("div");
+          entry.className = "error-entry";
+          entry.textContent = "[" + new Date().toLocaleTimeString() + "] " + msg;
+          errorLogList.appendChild(entry);
+          errorConsole.scrollTop = errorConsole.scrollHeight;
+        }
+
+        // Intercept console.error
+        var originalConsoleError = console.error;
+        console.error = function () {
+          originalConsoleError.apply(console, arguments);
+          var args = Array.prototype.slice.call(arguments);
+          var formatted = args.map(function(a) {
+            return (typeof a === 'object') ? JSON.stringify(a, null, 2) : a;
+          }).join(" ");
+          displayError(formatted);
+        };
+
+        // Catch global uncaught errors
+        window.addEventListener("error", function (event) {
+          displayError("Uncaught Exception: " + event.message + " (" + event.filename + ":" + event.lineno + ")");
+        });
+
+        // Catch unhandled Promise rejections
+        window.addEventListener("unhandledrejection", function (event) {
+          displayError("Unhandled Promise Rejection: " + (event.reason.stack || event.reason));
+        });
+      })();
+
+      // 2. ServiceWorker Registration
       window.addEventListener("load", function () {
         if ("serviceWorker" in navigator) {
-          navigator.serviceWorker.register("ServiceWorker.js");
+          navigator.serviceWorker.register("ServiceWorker.js").catch(function(err) {
+            console.error("ServiceWorker registration failed:", err);
+          });
         }
       });
 
-      var canvas = document.querySelector("#unity-canvas");
-      var xpBox = document.querySelector("#xp-loader");
-      var xpFill = document.querySelector("#xp-loader-fill");
-      var xpText = document.querySelector("#xp-loader-text");
-      var warningBanner = document.querySelector("#unity-warning");
+      // 3. Unity Engine Loader & Launcher
+      (function launchUnity() {
+        var canvas = document.querySelector("#unity-canvas");
+        var xpBox = document.querySelector("#xp-loader");
+        var xpFill = document.querySelector("#xp-loader-fill");
+        var xpText = document.querySelector("#xp-loader-text");
+        var xpStatus = document.querySelector("#xp-loader-status");
 
-      function unityShowBanner(msg, type) {
-        function updateBannerVisibility() {
-          warningBanner.style.display = warningBanner.children.length ? 'block' : 'none';
+        function unityShowBanner(msg, type) {
+          console.error("Unity Warning/Error [" + type + "]: " + msg);
         }
-        var div = document.createElement('div');
-        div.innerHTML = msg;
-        warningBanner.appendChild(div);
-        if (type == 'error') div.style = 'background: red; padding: 10px;';
-        else {
-          if (type == 'warning') div.style = 'background: yellow; padding: 10px;';
-          setTimeout(function() {
-            warningBanner.removeChild(div);
-            updateBannerVisibility();
-          }, 5000);
+
+        var buildUrl = "Build";
+        var loaderUrl = buildUrl + "/pggbog.loader.js";
+        var config = {
+          dataUrl: buildUrl + "/pggbog.data",
+          frameworkUrl: buildUrl + "/pggbog.framework.js",
+          codeUrl: buildUrl + "/pggbog.wasm",
+          streamingAssetsUrl: "StreamingAssets",
+          companyName: "Studio Minus",
+          productName: "People Playground",
+          productVersion: "1",
+          showBanner: unityShowBanner
+        };
+
+        if (/iPhone|iPad|iPod|Android/i.test(navigator.userAgent)) {
+          var meta = document.createElement('meta');
+          meta.name = 'viewport';
+          meta.content = 'width=device-width, height=device-height, initial-scale=1.0, user-scalable=no, shrink-to-fit=yes';
+          document.getElementsByTagName('head')[0].appendChild(meta);
         }
-        updateBannerVisibility();
-      }
 
-      var buildUrl = "Build";
-      var loaderUrl = buildUrl + "/pggbog.loader.js";
-      var config = {
-        dataUrl: buildUrl + "/pggbog.data",
-        frameworkUrl: buildUrl + "/pggbog.framework.js",
-        codeUrl: buildUrl + "/pggbog.wasm",
-        streamingAssetsUrl: "StreamingAssets",
-        companyName: "Studio Minus",
-        productName: "People Playground",
-        productVersion: "1",
-        showBanner: unityShowBanner
-      };
+        xpStatus.textContent = "Loading pggbog.loader.js...";
 
-      if (/iPhone|iPad|iPod|Android/i.test(navigator.userAgent)) {
-        var meta = document.createElement('meta');
-        meta.name = 'viewport';
-        meta.content = 'width=device-width, height=device-height, initial-scale=1.0, user-scalable=no, shrink-to-fit=yes';
-        document.getElementsByTagName('head')[0].appendChild(meta);
-      }
+        var script = document.createElement("script");
+        script.src = loaderUrl;
+        
+        script.onload = function() {
+          xpStatus.textContent = "Starting Unity Instance...";
 
-      var script = document.createElement("script");
-      script.src = loaderUrl;
-      script.onload = () => {
-        createUnityInstance(canvas, config, (progress) => {
-          var p = Math.round(progress * 100);
-          xpFill.style.width = p + "%";
-          xpText.textContent = p + "%";
-        }).then((unityInstance) => {
-          xpBox.style.display = "none";
-        }).catch((message) => {
-          alert(message);
-        });
-      };
-      document.body.appendChild(script);
+          if (typeof createUnityInstance !== "function") {
+            console.error("createUnityInstance is not defined! pggbog.loader.js failed to export loader function.");
+            return;
+          }
+
+          createUnityInstance(canvas, config, function(progress) {
+            var p = Math.round(progress * 100);
+            xpFill.style.width = p + "%";
+            xpText.textContent = p + "%";
+            if (p < 90) {
+              xpStatus.textContent = "Downloading & Unpacking Assets: " + p + "%";
+            } else {
+              xpStatus.textContent = "Compiling WebAssembly Engine: " + p + "%";
+            }
+          }).then(function(unityInstance) {
+            xpBox.style.display = "none";
+            console.log("Unity Engine successfully booted!");
+          }).catch(function(message) {
+            console.error("Unity Instance Error: " + message);
+          });
+        };
+
+        script.onerror = function() {
+          console.error("Failed to load script: " + loaderUrl + ". Check if Build/pggbog.loader.js is missing (404).");
+        };
+
+        document.body.appendChild(script);
+      })();
     </script>
   </body>
 </html>
