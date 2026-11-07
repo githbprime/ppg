@@ -191,13 +191,13 @@
       })();
 
       // 2. ServiceWorker Registration
-      window.addEventListener("load", function () {
-        if ("serviceWorker" in navigator) {
-          navigator.serviceWorker.register("ServiceWorker.js").catch(function(err) {
-            console.error("ServiceWorker registration failed:", err);
-          });
-        }
-      });
+      // window.addEventListener("load", function () {
+      //   if ("serviceWorker" in navigator) {
+      //     navigator.serviceWorker.register("ServiceWorker.js").catch(function(err) {
+      //       console.error("ServiceWorker registration failed:", err);
+      //     });
+      //   }
+      // });
 
       // 3. Unity Engine Loader & Launcher
       (function launchUnity() {
