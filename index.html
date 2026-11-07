@@ -26,9 +26,11 @@
 
       #unity-canvas {
         background: #000;
+        width: 100%;
+        height: 100%;
       }
 
-      /* XP Loader CSS */
+      /* Loader Overlay */
       #xp-loader {
         position: absolute;
         top: 50%;
@@ -42,7 +44,7 @@
         padding: 12px;
         display: flex;
         flex-direction: column;
-        gap: 8px;
+        gap: 10px;
         z-index: 9999;
       }
 
@@ -83,6 +85,24 @@
         color: #333;
       }
 
+      /* Click to Start Overlay Button */
+      #start-btn {
+        display: none;
+        padding: 10px 20px;
+        background: #2b74c7;
+        color: white;
+        border: 1px solid #1a4a9c;
+        font-size: 14px;
+        font-weight: bold;
+        cursor: pointer;
+        border-radius: 4px;
+        text-align: center;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+      }
+      #start-btn:hover {
+        background: #3b84d7;
+      }
+
       /* On-Screen Error Console Overlay */
       #error-console {
         display: none;
@@ -90,33 +110,42 @@
         bottom: 10px;
         left: 10px;
         right: 10px;
-        max-height: 45vh;
+        max-height: 35vh;
         background: rgba(20, 0, 0, 0.92);
         border: 2px solid #ff3333;
         color: #ff9999;
         font-family: monospace;
-        font-size: 12px;
-        padding: 12px;
+        font-size: 11px;
+        padding: 10px;
         overflow-y: auto;
         z-index: 100000;
         box-shadow: 0 0 15px rgba(255, 0, 0, 0.6);
       }
 
       #error-console h4 {
-        margin: 0 0 8px 0;
+        margin: 0 0 6px 0;
         color: #ff4d4d;
-        font-size: 13px;
+        font-size: 12px;
         border-bottom: 1px solid #ff3333;
         padding-bottom: 4px;
-        text-transform: uppercase;
+        display: flex;
+        justify-content: space-between;
       }
 
       .error-entry {
-        margin-bottom: 6px;
+        margin-bottom: 4px;
         white-space: pre-wrap;
         word-break: break-word;
         border-bottom: 1px dashed rgba(255, 255, 255, 0.15);
-        padding-bottom: 4px;
+        padding-bottom: 2px;
+      }
+      .error-count {
+        background: #ff3333;
+        color: white;
+        padding: 0 5px;
+        border-radius: 8px;
+        font-size: 10px;
+        margin-left: 6px;
       }
     </style>
   </head>
@@ -127,16 +156,20 @@
       <div id="xp-loader-status">Waiting for file merger...</div>
       <div id="xp-loader-bar"><div id="xp-loader-fill"></div></div>
       <div id="xp-loader-text">0%</div>
+      <button id="start-btn">Click to Start Game</button>
     </div>
 
     <!-- Unity Container -->
     <div id="unity-container">
-      <canvas id="unity-canvas" width="960" height="600" tabindex="-1"></canvas>
+      <canvas id="unity-canvas" tabindex="-1"></canvas>
     </div>
 
     <!-- Visible On-Screen Error Log Overlay -->
     <div id="error-console">
-      <h4>⚠️ Unity / Script Error Log</h4>
+      <h4>
+        <span>⚠️ Unity Error Log</span>
+        <span id="clear-log-btn" style="cursor:pointer; text-decoration:underline;" onclick="document.getElementById('error-log-list').innerHTML='';">Clear</span>
+      </h4>
       <div id="error-log-list"></div>
     </div>
 
@@ -154,21 +187,51 @@
     <script src="./merge.js"></script>
 
     <script>
-      // 1. Setup Global On-Screen Error Console Logger
+      // 1. Setup Throttled & Deduplicated Error Logging
       (function setupErrorLogging() {
         var errorConsole = document.querySelector("#error-console");
         var errorLogList = document.querySelector("#error-log-list");
+        var lastMessage = "";
+        var lastEntryElem = null;
+        var repeatCount = 1;
+        var totalEntries = 0;
+        var MAX_ENTRIES = 50;
 
         function displayError(msg) {
           errorConsole.style.display = "block";
+
+          // Deduplicate per-frame repeating errors (missing shaders, null refs)
+          if (msg === lastMessage && lastEntryElem) {
+            repeatCount++;
+            var countBadge = lastEntryElem.querySelector(".error-count");
+            if (!countBadge) {
+              countBadge = document.createElement("span");
+              countBadge.className = "error-count";
+              lastEntryElem.appendChild(countBadge);
+            }
+            countBadge.textContent = "x" + repeatCount;
+            return;
+          }
+
+          lastMessage = msg;
+          repeatCount = 1;
+
+          if (totalEntries >= MAX_ENTRIES) {
+            if (errorLogList.firstChild) {
+              errorLogList.removeChild(errorLogList.firstChild);
+            }
+          } else {
+            totalEntries++;
+          }
+
           var entry = document.createElement("div");
           entry.className = "error-entry";
           entry.textContent = "[" + new Date().toLocaleTimeString() + "] " + msg;
           errorLogList.appendChild(entry);
+          lastEntryElem = entry;
           errorConsole.scrollTop = errorConsole.scrollHeight;
         }
 
-        // Intercept console.error
         var originalConsoleError = console.error;
         console.error = function () {
           originalConsoleError.apply(console, arguments);
@@ -179,36 +242,26 @@
           displayError(formatted);
         };
 
-        // Catch global uncaught errors
         window.addEventListener("error", function (event) {
           displayError("Uncaught Exception: " + event.message + " (" + event.filename + ":" + event.lineno + ")");
         });
 
-        // Catch unhandled Promise rejections
         window.addEventListener("unhandledrejection", function (event) {
           displayError("Unhandled Promise Rejection: " + (event.reason.stack || event.reason));
         });
       })();
 
-      // 2. ServiceWorker Registration
-      // window.addEventListener("load", function () {
-      //   if ("serviceWorker" in navigator) {
-      //     navigator.serviceWorker.register("ServiceWorker.js").catch(function(err) {
-      //       console.error("ServiceWorker registration failed:", err);
-      //     });
-      //   }
-      // });
-
-      // 3. Unity Engine Loader & Launcher
+      // 2. Unity Engine Loader with Click-To-Start Button
       (function launchUnity() {
         var canvas = document.querySelector("#unity-canvas");
         var xpBox = document.querySelector("#xp-loader");
         var xpFill = document.querySelector("#xp-loader-fill");
         var xpText = document.querySelector("#xp-loader-text");
         var xpStatus = document.querySelector("#xp-loader-status");
+        var startBtn = document.querySelector("#start-btn");
 
         function unityShowBanner(msg, type) {
-          console.error("Unity Warning/Error [" + type + "]: " + msg);
+          console.error("Unity [" + type + "]: " + msg);
         }
 
         var buildUrl = "Build";
@@ -231,38 +284,45 @@
           document.getElementsByTagName('head')[0].appendChild(meta);
         }
 
-        xpStatus.textContent = "Loading pggbog.loader.js...";
+        xpStatus.textContent = "Loading loader script...";
 
         var script = document.createElement("script");
         script.src = loaderUrl;
         
         script.onload = function() {
-          xpStatus.textContent = "Starting Unity Instance...";
+          xpStatus.textContent = "Files ready. Click below to launch.";
+          startBtn.style.display = "block";
 
-          if (typeof createUnityInstance !== "function") {
-            console.error("createUnityInstance is not defined! pggbog.loader.js failed to export loader function.");
-            return;
-          }
+          startBtn.onclick = function() {
+            startBtn.style.display = "none";
+            xpStatus.textContent = "Initializing Unity Engine...";
 
-          createUnityInstance(canvas, config, function(progress) {
-            var p = Math.round(progress * 100);
-            xpFill.style.width = p + "%";
-            xpText.textContent = p + "%";
-            if (p < 90) {
-              xpStatus.textContent = "Downloading & Unpacking Assets: " + p + "%";
-            } else {
-              xpStatus.textContent = "Compiling WebAssembly Engine: " + p + "%";
+            if (typeof createUnityInstance !== "function") {
+              console.error("createUnityInstance is not defined! pggbog.loader.js failed to load.");
+              return;
             }
-          }).then(function(unityInstance) {
-            xpBox.style.display = "none";
-            console.log("Unity Engine successfully booted!");
-          }).catch(function(message) {
-            console.error("Unity Instance Error: " + message);
-          });
+
+            createUnityInstance(canvas, config, function(progress) {
+              var p = Math.round(progress * 100);
+              xpFill.style.width = p + "%";
+              xpText.textContent = p + "%";
+              if (p < 90) {
+                xpStatus.textContent = "Unpacking Assets: " + p + "%";
+              } else {
+                xpStatus.textContent = "Compiling WebAssembly Engine: " + p + "%";
+              }
+            }).then(function(unityInstance) {
+              xpBox.style.display = "none";
+              canvas.focus();
+              console.log("Unity Engine successfully booted!");
+            }).catch(function(message) {
+              console.error("Unity Instance Error: " + message);
+            });
+          };
         };
 
         script.onerror = function() {
-          console.error("Failed to load script: " + loaderUrl + ". Check if Build/pggbog.loader.js is missing (404).");
+          console.error("Failed to load script: " + loaderUrl);
         };
 
         document.body.appendChild(script);
