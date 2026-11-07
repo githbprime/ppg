@@ -3,7 +3,7 @@
 
   const defaultConfig = {
     files: [],
-    basePath: "",
+    basePath: "", 
     debug: true,
   };
 
