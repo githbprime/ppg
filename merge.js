@@ -12,15 +12,16 @@
     defaultConfig,
     window.fileMergerConfig || {},
   );
-  window.mergedFiles = window.mergedFiles || {};
 
   const mergeStatus = {};
   const mergeProgress = {};
+  const blobPromises = {};
 
   let loadingDiv;
   let loadingContent;
 
   function initializeUI() {
+    if (document.getElementById("file-merger-loading")) return;
     loadingDiv = document.createElement("div");
     loadingDiv.id = "file-merger-loading";
     loadingDiv.style.cssText = `
@@ -49,9 +50,7 @@
     if (!loadingContent) return;
 
     const lines = [
-      '<div style="font-size: 18px; margin-bottom: 15px;">loading...</div>',
-      '<a href="https://www.gn-math.dev/" style="font-size: 15px; color: #d42222; text-decoration: underline; margin-bottom: 10px; display: block;">gn-math</a>',
-      '<a href="https://docs.google.com/document/d/1_FmH3BlSBQI7FGgAQL59-ZPe8eCxs35wel6JUyVaG8Q/" style="font-size: 15px; color: #14b4f3; text-decoration: underline; margin-bottom: 10px; display: block;">ugs</a>',
+      '<div style="font-size: 18px; margin-bottom: 15px;">Merging files...</div>',
     ];
 
     config.files.forEach((file) => {
@@ -91,9 +90,11 @@
 
     if (allDone) {
       setTimeout(() => {
-        loadingDiv.style.opacity = "0";
-        loadingDiv.style.transition = "opacity 0.5s";
-        setTimeout(() => loadingDiv.remove(), 500);
+        if (loadingDiv) {
+          loadingDiv.style.opacity = "0";
+          loadingDiv.style.transition = "opacity 0.5s";
+          setTimeout(() => loadingDiv.remove(), 500);
+        }
       }, 1000);
     }
   }
@@ -107,10 +108,11 @@
   }
 
   function normalizeUrl(url) {
+    if (!url) return "";
     try {
       return decodeURIComponent(url.toString().split("?")[0]);
     } catch (e) {
-      return url;
+      return url.toString();
     }
   }
 
@@ -137,37 +139,33 @@
 
       log(`Merging ${filePath} from ${numParts} parts...`);
 
-      const buffers = [];
+      const blobs = [];
       for (let i = 0; i < parts.length; i++) {
         const response = await window.originalFetch(parts[i]);
 
         if (!response.ok) {
-          if (response.status === 403 || response.status === 404) {
-            throw new Error(`Part missing: ${parts[i]}`);
-          }
           throw new Error(
-            `failed to load sowwy (make a report in bug-reports in the discord) ${parts[i]}: ${response.status}`,
+            `Failed to load part ${parts[i]}: ${response.status}`,
           );
         }
 
-        const buffer = await response.arrayBuffer();
-        buffers.push(buffer);
+        const blob = await response.blob();
+        blobs.push(blob);
 
         mergeProgress[fileName].current = i + 1;
         updateLoadingDisplay();
       }
 
-      const totalSize = buffers.reduce((sum, buf) => sum + buf.byteLength, 0);
-      const mergedArray = new Uint8Array(totalSize);
-      let offset = 0;
+      const contentType = fileName.endsWith(".wasm")
+        ? "application/wasm"
+        : "application/octet-stream";
 
-      for (const buffer of buffers) {
-        mergedArray.set(new Uint8Array(buffer), offset);
-        offset += buffer.byteLength;
-      }
+      // Combine Blob chunks with 0 RAM duplication
+      const mergedBlob = new Blob(blobs, { type: contentType });
+      const blobUrl = URL.createObjectURL(mergedBlob);
 
-      log(` ${filePath} done: ${(totalSize / 1024 / 1024).toFixed(2)} MB`);
-      return mergedArray.buffer;
+      log(` ${filePath} done: ${(mergedBlob.size / 1024 / 1024).toFixed(2)} MB`);
+      return blobUrl;
     } catch (err) {
       error(`Failed to merge ${filePath}:`, err);
       throw err;
@@ -175,6 +173,7 @@
   }
 
   function shouldInterceptFile(url) {
+    if (!url) return null;
     const urlStr = normalizeUrl(url);
     if (urlStr.includes(".part")) return null;
 
@@ -197,16 +196,19 @@
     return null;
   }
 
-  function getMergedFile(filename) {
-    if (window.mergedFiles[filename]) return window.mergedFiles[filename];
-
-    for (const [key, value] of Object.entries(window.mergedFiles)) {
-      if (urlsMatch(key, filename)) return value;
+  function waitForBlobUrl(filename) {
+    if (blobPromises[filename]) {
+      return blobPromises[filename];
     }
-
-    return null;
+    for (const [key, promise] of Object.entries(blobPromises)) {
+      if (urlsMatch(key, filename)) return promise;
+    }
+    return Promise.reject(
+      new Error(`File not configured for merger: ${filename}`),
+    );
   }
 
+  // Intercept Fetch
   if (!window.originalFetch) window.originalFetch = window.fetch;
 
   window.fetch = function (url, ...args) {
@@ -214,43 +216,15 @@
 
     if (filename) {
       log("Intercepting fetch for:", filename);
-
-      return new Promise((resolve, reject) => {
-        const maxWait = 60000;
-        const startTime = Date.now();
-
-        const check = setInterval(() => {
-          const buffer = getMergedFile(filename);
-
-          if (buffer) {
-            clearInterval(check);
-            const contentType = filename.endsWith(".wasm")
-              ? "application/wasm"
-              : "application/octet-stream";
-            resolve(
-              new Response(buffer, {
-                status: 200,
-                statusText: "OK",
-                headers: {
-                  "Content-Type": contentType,
-                  "Content-Length": buffer.byteLength.toString(),
-                },
-              }),
-            );
-          } else if (mergeStatus[filename] === "failed") {
-            clearInterval(check);
-            reject(new Error(`Merge failed for ${filename}`));
-          } else if (Date.now() - startTime > maxWait) {
-            clearInterval(check);
-            reject(new Error(`Timeout waiting for ${filename}`));
-          }
-        }, 100);
+      return waitForBlobUrl(filename).then((blobUrl) => {
+        return window.originalFetch.call(this, blobUrl, ...args);
       });
     }
 
     return window.originalFetch.call(this, url, ...args);
   };
 
+  // Intercept XHR cleanly
   if (!window.OriginalXMLHttpRequest)
     window.OriginalXMLHttpRequest = window.XMLHttpRequest;
 
@@ -258,43 +232,40 @@
     const xhr = new window.OriginalXMLHttpRequest(options);
     const originalOpen = xhr.open;
     const originalSend = xhr.send;
-    let requestUrl = "";
+
+    let interceptedFilename = null;
+    let openArgs = null;
 
     xhr.open = function (method, url, ...args) {
-      requestUrl = url;
+      interceptedFilename = shouldInterceptFile(url);
+      if (interceptedFilename) {
+        openArgs = { method, url, args };
+        return originalOpen.call(this, method, url, ...args);
+      }
       return originalOpen.call(this, method, url, ...args);
     };
 
     xhr.send = function (...args) {
-      const filename = shouldInterceptFile(requestUrl);
+      if (interceptedFilename) {
+        log("Intercepting XHR send for:", interceptedFilename);
 
-      if (filename) {
-        log("Intercepting XHR for:", filename);
-
-        const waitForMerge = () => {
-          const buffer = getMergedFile(filename);
-
-          if (buffer) {
-            Object.defineProperties(xhr, {
-              status: { value: 200 },
-              statusText: { value: "OK" },
-              response: { value: buffer },
-              responseType: { value: "arraybuffer" },
-              readyState: { value: 4 },
-            });
-
-            setTimeout(() => {
-              if (xhr.onreadystatechange) xhr.onreadystatechange();
-              if (xhr.onload) xhr.onload({ type: "load", target: xhr });
-            }, 1);
-          } else if (mergeStatus[filename] === "failed") {
-            if (xhr.onerror) xhr.onerror(new Error("Merge Failed"));
-          } else {
-            setTimeout(waitForMerge, 100);
-          }
-        };
-
-        waitForMerge();
+        waitForBlobUrl(interceptedFilename)
+          .then((blobUrl) => {
+            const savedResponseType = xhr.responseType;
+            originalOpen.call(this, openArgs.method, blobUrl, ...openArgs.args);
+            if (savedResponseType) {
+              try {
+                xhr.responseType = savedResponseType;
+              } catch (e) {}
+            }
+            originalSend.call(this, ...args);
+          })
+          .catch((err) => {
+            error("XHR merge failed for", interceptedFilename, err);
+            const errorEvent = new Event("error");
+            xhr.dispatchEvent(errorEvent);
+            if (xhr.onerror) xhr.onerror(errorEvent);
+          });
         return;
       }
 
@@ -309,34 +280,31 @@
 
     updateLoadingDisplay();
 
-    try {
-      const promises = config.files.map((file) => {
-        const fullPath = config.basePath
-          ? `${config.basePath}${file.name}`
-          : file.name;
+    config.files.forEach((file) => {
+      const fullPath = config.basePath
+        ? `${config.basePath}${file.name}`
+        : file.name;
 
+      const promise = (async () => {
         mergeStatus[file.name] = "merging";
         updateLoadingDisplay();
+        try {
+          const blobUrl = await mergeSplitFiles(fullPath, file.parts);
+          mergeStatus[file.name] = "ready";
+          updateLoadingDisplay();
+          return blobUrl;
+        } catch (err) {
+          mergeStatus[file.name] = "failed";
+          updateLoadingDisplay();
+          throw err;
+        }
+      })();
 
-        return mergeSplitFiles(fullPath, file.parts)
-          .then((buffer) => {
-            window.mergedFiles[file.name] = buffer;
-            window.mergedFiles[fullPath] = buffer;
-            mergeStatus[file.name] = "ready";
-            updateLoadingDisplay();
-          })
-          .catch((err) => {
-            mergeStatus[file.name] = "failed";
-            updateLoadingDisplay();
-            error(err);
-          });
-      });
-
-      await Promise.all(promises);
-    } catch (e) {
-      error(e);
-    }
+      blobPromises[file.name] = promise;
+      blobPromises[fullPath] = promise;
+    });
   }
+
   function init() {
     if (document.body) {
       initializeUI();
