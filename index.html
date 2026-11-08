@@ -105,7 +105,7 @@
         background: #2b74c7;
       }
 
-      /* Hidden Error Console (Only displays on actual script failures) */
+      /* Hidden Error Console */
       #error-console {
         display: none;
         position: fixed;
@@ -166,7 +166,7 @@
     <!-- Hidden Error Log Overlay -->
     <div id="error-console">
       <h4>
-        <span>⚠️ Fatal Execution Error</span>
+        <span>⚠️ Execution Error</span>
         <span id="clear-log-btn" style="cursor:pointer; text-decoration:underline;" onclick="document.getElementById('error-log-list').innerHTML='';">Clear</span>
       </h4>
       <div id="error-log-list"></div>
@@ -186,7 +186,9 @@
     <script src="./merge.js"></script>
 
     <script>
-      // 1. Error Logger with Filter for Benign Unity Warnings
+      window.gameLoaded = false;
+
+      // 1. Error Logger with Filter & Game-Loaded Auto-Suppress
       (function setupErrorLogging() {
         var errorConsole = document.querySelector("#error-console");
         var errorLogList = document.querySelector("#error-log-list");
@@ -209,7 +211,8 @@
         }
 
         function displayError(msg) {
-          if (isIgnored(msg)) return;
+          // Suppress error overlay completely once the game loads or if message is harmless
+          if (window.gameLoaded || isIgnored(msg)) return;
 
           errorConsole.style.display = "block";
           var entry = document.createElement("div");
@@ -238,13 +241,14 @@
         });
       })();
 
-      // 2. Unity Engine Loader (Auto-starts, no fullscreen, broadcasts progress)
+      // 2. Unity Engine Loader
       (function launchUnity() {
         var canvas = document.querySelector("#unity-canvas");
         var xpBox = document.querySelector("#xp-loader");
         var xpFill = document.querySelector("#xp-loader-fill");
         var xpText = document.querySelector("#xp-loader-text");
         var xpStatus = document.querySelector("#xp-loader-status");
+        var errorConsole = document.querySelector("#error-console");
         var standardProgressBar = document.querySelector("#unity-progress-bar-full");
 
         function unityShowBanner(msg, type) {
@@ -297,7 +301,7 @@
               standardProgressBar.style.width = p + "%";
             }
 
-            // Broadcast Unity API Progress to window and parent site wrappers
+            // Broadcast Unity API Progress
             window.unityProgress = progress;
             window.dispatchEvent(new CustomEvent("unityProgress", { detail: progress }));
             if (window.parent && window.parent !== window) {
@@ -311,7 +315,9 @@
             }
           }).then(function(unityInstance) {
             window.unityInstance = unityInstance;
+            window.gameLoaded = true; // Mark game as loaded
             xpBox.style.display = "none";
+            errorConsole.style.display = "none"; // Hide error log completely
             canvas.focus();
             console.log("Unity Engine successfully booted!");
           }).catch(function(message) {
